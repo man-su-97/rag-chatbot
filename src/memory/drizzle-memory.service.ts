@@ -1,12 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { IMemoryBackend } from './memory-backend.interface';
 import { ChatMessage } from 'src/chatbot/types';
 import { db } from 'src/database/drizzle-client';
 import { conversation } from 'src/database/schema/conversation.schema';
 import { eq } from 'drizzle-orm';
 
 @Injectable()
-export class DrizzleMemoryService implements IMemoryBackend {
+export class DrizzleMemoryService {
   async loadMemory(sessionId: string): Promise<ChatMessage[]> {
     const row = await db
       .select()
