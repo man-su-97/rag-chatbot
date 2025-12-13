@@ -15,6 +15,7 @@ export function createModel(config: ProviderConfig) {
       return new ChatGoogleGenerativeAI({
         apiKey: config.apiKey,
         model: config.model,
+        apiVersion: config.apiVersion ?? 'v1beta',
       });
 
     case 'anthropic':

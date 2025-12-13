@@ -1,16 +1,18 @@
 import { Module } from '@nestjs/common';
-import { ChatbotService } from './chatbot.service';
-import { InMemoryBackend } from 'src/memory/in-memory-backend';
 import { ChatbotController } from './chatbot.controller';
+import { ChatbotService } from './chatbot.service';
+import { DatabaseModule } from 'src/database/database.module';
+import { DrizzleMemoryService } from 'src/memory/drizzle-memory.service';
 
 @Module({
+  imports: [DatabaseModule],
+  controllers: [ChatbotController],
   providers: [
     ChatbotService,
     {
       provide: 'MEMORY_BACKEND',
-      useClass: InMemoryBackend,
+      useClass: DrizzleMemoryService,
     },
   ],
-  controllers: [ChatbotController],
 })
 export class ChatbotModule {}

@@ -1,4 +1,11 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  OnModuleInit,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { buildChatGraph } from './agent/agent.graph';
 import { ChatbotSchema } from './validation/chatbot.schema';
 import { z } from 'zod';
@@ -40,13 +47,25 @@ export class ChatbotService implements OnModuleInit {
       lastResponse: undefined,
     };
 
-    const finalState = await this.graph.invoke(initialState);
+    try {
+      const finalState = await this.graph.invoke(initialState);
+      return {
+        sessionId: finalState.sessionId,
+        reply: finalState.lastResponse ?? null,
+        messages: finalState.messages,
+        streamed: false,
+      } as const;
+    } catch (e) {
+      const error = e as Error;
+      if (error.message.includes('API key')) {
+        throw new UnauthorizedException(error.message);
+      } else if (error.message.includes('Invalid input')) {
+        throw new BadRequestException(error.message);
+      } else if (error.message.includes('[GoogleGenerativeAI Error]')) {
+        throw new BadRequestException(error.message);
+      }
 
-    return {
-      sessionId: finalState.sessionId,
-      reply: finalState.lastResponse ?? null,
-      messages: finalState.messages,
-      streamed: false,
-    } as const;
+      throw new InternalServerErrorException(error.message);
+    }
   }
 }
