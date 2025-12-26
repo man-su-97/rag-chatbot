@@ -1,6 +1,5 @@
 import { z } from 'zod';
 
-// Schema for adding a widget
 export const addWidgetParamsSchema = z.object({
   name: z.string().describe('The descriptive name for the new widget.'),
   chart: z
@@ -28,7 +27,6 @@ export const updateWidgetParamsSchema = z.object({
   id: z.string().describe('The ID of the widget to update.'),
   name: z.string().optional().describe('The new name for the widget.'),
 
-  // Future-proofing: these match your EditWidgetModal nicely
   chart: z
     .enum(['bar_chart', 'line_chart', 'pie_chart', 'table_chart'])
     .optional(),

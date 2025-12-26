@@ -46,7 +46,6 @@ export function createModel(
       throw new Error(`Unsupported provider: ${String(config.provider)}`);
   }
 
-  // Bind tools ONLY if present
   if (tools && tools.length > 0) {
     return model.bindTools(tools);
   }

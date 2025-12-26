@@ -8,7 +8,12 @@ export const ALLOWED_PROVIDERS: SupportedProviders[] = [
 ];
 
 export const ALLOWED_MODELS: Record<SupportedProviders, string[]> = {
-  google: ['gemini-pro', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'],
+  google: [
+    'gemini-pro',
+    'gemini-1.5-flash',
+    'gemini-1.5-pro',
+    'gemini-2.5-flash',
+  ],
   openai: ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'],
   anthropic: [
     'claude-3-opus-20240229',

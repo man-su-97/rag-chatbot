@@ -1,11 +1,28 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { ThrottlerModule } from '@nestjs/throttler';
+
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ChatbotModule } from './chatbot/chatbot.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true }), ChatbotModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    ChatbotModule,
+
+    ThrottlerModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        throttlers: [
+          {
+            ttl: config.get<number>('RATE_LIMIT_TTL', 60),
+            limit: config.get<number>('RATE_LIMIT_MAX', 30),
+          },
+        ],
+      }),
+    }),
+  ],
   controllers: [AppController],
   providers: [AppService],
 })

@@ -20,10 +20,6 @@ export class SessionConfigService {
       this.configService.get<string>('DEFAULT_MODEL') ?? 'gemini-1.5-flash';
   }
 
-  /**
-   * Creates and stores a configuration for a given session.
-   * It resolves the API key, using a fallback if not provided.
-   */
   public createSessionConfig(payload: SessionConfigPayload): void {
     const apiKey = payload.apiKey ?? this.getFallbackApiKey(payload.provider);
 
@@ -42,18 +38,12 @@ export class SessionConfigService {
     this.sessionConfigs.set(payload.sessionId, config);
   }
 
-  /**
-   * Retrieves the configuration for a session, falling back to system
-   * defaults if no session-specific configuration exists.
-   */
   public getResolvedConfig(sessionId: string): ProviderConfig {
-    // 1. Check for session-specific configuration
     const sessionConfig = this.sessionConfigs.get(sessionId);
     if (sessionConfig) {
       return sessionConfig;
     }
 
-    // 2. Fallback to system defaults
     const apiKey = this.getFallbackApiKey(this.defaultProvider);
     if (!apiKey) {
       throw new UnauthorizedException(

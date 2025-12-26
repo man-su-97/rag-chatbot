@@ -20,3 +20,18 @@ export interface ChatResponseDto {
   messages: ChatMessage[];
   streamed?: boolean;
 }
+
+export type StreamTokenData = {
+  type: 'response.token';
+  sessionId: string;
+  token: string;
+};
+
+export type StreamCompletionData = {
+  type: 'response.completed';
+  sessionId: string;
+  reply: string | null;
+  messages: ChatMessage[];
+};
+
+export type StreamData = StreamTokenData | StreamCompletionData;
