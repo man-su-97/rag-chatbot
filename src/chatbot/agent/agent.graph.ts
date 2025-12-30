@@ -1,34 +1,47 @@
-import { StateGraph, START, END, Annotation } from '@langchain/langgraph';
-import { ToolNode } from '@langchain/langgraph/prebuilt';
-import { DynamicStructuredTool } from '@langchain/core/tools';
-import { createModel } from '../models/model.factory';
-import { ProviderConfig, ChatMessage } from '../types';
+import { BaseMessage } from '@langchain/core/messages';
+import { ProviderConfig } from '../types';
+import { Annotation } from '@langchain/langgraph';
+
+export const SYSTEM_PROMPT = `You are an AI assistant embedded in a web application.
+
+Your job has TWO MODES:
+
+MODE 1: GENERAL CHAT
+- Answer normally in plain text.
+
+MODE 2: DASHBOARD COMMAND
+- Output ONLY valid JSON matching the command schema.
+
+Never mix text and JSON.
+Never explain the JSON.
+`;
 
 export const ChatState = Annotation.Root({
   sessionId: Annotation<string>(),
   sessionStartedAt: Annotation<string>(),
   metadataIp: Annotation<string | undefined>(),
   metadataDevice: Annotation<string | undefined>(),
-
   providerConfig: Annotation<ProviderConfig>(),
 
-  messages: Annotation<Array<ChatMessage>>(),
+  messages: Annotation<BaseMessage[]>({
+    reducer: (prev, next) => prev.concat(next),
+    default: () => [],
+  }),
 });
 
-export type MemoryLoadFn = (sessionId: string) => Promise<ChatMessage[]>;
-
+export type MemoryLoadFn = (sessionId: string) => Promise<BaseMessage[]>;
 export type MemorySaveFn = (
   sessionId: string,
-  messages: ChatMessage[],
+  messages: BaseMessage[],
 ) => Promise<void>;
 
 export function createLoadMemoryNode(loadFn: MemoryLoadFn) {
   return async function loadMemoryNode(state: typeof ChatState.State) {
     const persisted = (await loadFn(state.sessionId)) ?? [];
-    const incoming = state.messages ?? [];
-
+    // The 'incoming' message (initial user message) is already in the state
+    // and will be handled by the reducer. We only need to return the persisted history.
     return {
-      messages: [...persisted, ...incoming],
+      messages: persisted,
     };
   };
 }
@@ -40,95 +53,6 @@ export function createSaveMemoryNode(saveFn: MemorySaveFn) {
   };
 }
 
-export function validateInputNode(state: typeof ChatState.State) {
-  if (!state.messages?.length) {
-    throw new Error('No messages found.');
-  }
-
-  const last = state.messages[state.messages.length - 1];
-
-  if (last.role !== 'user') {
-    throw new Error('Last message must be from user.');
-  }
-
-  if (!last.content?.trim()) {
-    throw new Error('Empty user message.');
-  }
-
-  if (last.content.length > 5000) {
-    throw new Error('Message too long.');
-  }
-
-  if (!state.providerConfig?.apiKey) {
-    throw new Error('API key missing.');
-  }
-
-  if (!state.providerConfig?.model) {
-    throw new Error('Model missing.');
-  }
-
+export function validateInputNode(_: typeof ChatState.State) {
   return {};
-}
-
-export async function llmNode(
-  state: typeof ChatState.State,
-  tools: DynamicStructuredTool[],
-) {
-  const llm = createModel(state.providerConfig, tools);
-
-  const response = await llm.invoke(
-    state.messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    })),
-  );
-
-  return {
-    messages: [
-      ...state.messages,
-      {
-        role: 'assistant',
-        content: response.content ?? '',
-        createdAt: new Date().toISOString(),
-      },
-    ],
-  };
-}
-
-function shouldContinue(state: typeof ChatState.State) {
-  const last = state.messages[state.messages.length - 1] as any;
-
-  if (last?.tool_calls?.length) {
-    return 'tools';
-  }
-
-  return END;
-}
-
-export function buildChatGraph(
-  loadMemory: MemoryLoadFn,
-  saveMemory: MemorySaveFn,
-  tools: DynamicStructuredTool[],
-) {
-  const toolNode = new ToolNode(tools);
-
-  return new StateGraph(ChatState)
-    .addNode('validate', validateInputNode)
-    .addNode('loadMemory', createLoadMemoryNode(loadMemory))
-    .addNode('llm', (state) => llmNode(state, tools))
-    .addNode('tools', toolNode)
-    .addNode('saveMemory', createSaveMemoryNode(saveMemory))
-
-    .addEdge(START, 'validate')
-    .addEdge('validate', 'loadMemory')
-    .addEdge('loadMemory', 'llm')
-
-    .addConditionalEdges('llm', shouldContinue, {
-      tools: 'tools',
-      end: 'saveMemory',
-    })
-
-    .addEdge('tools', 'llm')
-    .addEdge('saveMemory', END)
-    .compile();
 }

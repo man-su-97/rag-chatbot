@@ -16,7 +16,7 @@ export function createModel(
         apiKey: config.apiKey,
         model: config.model,
         temperature: 0,
-        streaming: false,
+        streaming: true,
       });
       break;
     }
@@ -27,7 +27,7 @@ export function createModel(
         model: config.model,
         apiVersion: config.apiVersion ?? 'v1beta',
         temperature: 0,
-        streaming: false,
+        streaming: true,
       });
       break;
     }
@@ -37,7 +37,7 @@ export function createModel(
         apiKey: config.apiKey,
         model: config.model,
         temperature: 0,
-        streaming: false,
+        streaming: true,
       });
       break;
     }

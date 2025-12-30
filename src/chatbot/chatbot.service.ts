@@ -1,32 +1,34 @@
 import {
-  BadRequestException,
   Inject,
   Injectable,
   InternalServerErrorException,
   OnModuleInit,
-  UnauthorizedException,
 } from '@nestjs/common';
-import { buildChatGraph } from './agent/agent.graph';
-import { ChatbotSchema } from './validation/chatbot.schema';
+import { Observable } from 'rxjs';
 import { z } from 'zod';
-import type { IMemoryBackend } from 'src/memory/memory-backend.interface';
+import { v4 as uuidv4 } from 'uuid';
+
+import { ChatbotSchema } from './validation/chatbot.schema';
+import type { IMemoryBackend } from '../memory/memory-backend.interface';
 import { DashboardToolService } from './tools/DashboardToolService';
 import { SessionConfigService } from './session-config.service';
 import { SessionConfigPayload } from './validation/session-config.schema';
-import { Observable } from 'rxjs';
-import { ChatMessage, StreamData } from './types';
-import { v4 as uuidv4 } from 'uuid';
+import { ChatMessage, StreamEvent } from './types';
 import { classifyProviderError } from './errors/provider-error.util';
+import { mapBaseMessageToChatMessage } from './utils/message-mapper';
+
+import { AIMessageChunk, HumanMessage } from '@langchain/core/messages';
+import { buildAgentGraph } from './agent/buildAgentGraph';
 
 const PLATFORM_DEFAULT_PROVIDER = 'google' as const;
-const PLATFORM_DEFAULT_MODEL = 'gemini-2.5-flash';
+const PLATFORM_DEFAULT_MODEL = 'gemini-1.5-pro-latest';
 
 const PLATFORM_FALLBACK_PROVIDER = 'openai' as const;
 const PLATFORM_FALLBACK_MODEL = 'gpt-4o-mini';
 
 @Injectable()
 export class ChatbotService implements OnModuleInit {
-  private graph: ReturnType<typeof buildChatGraph>;
+  private agentGraph: any;
 
   constructor(
     @Inject('MEMORY_BACKEND') private readonly memory: IMemoryBackend,
@@ -35,12 +37,14 @@ export class ChatbotService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    const tools = this.dashboardToolService.getTools();
+    const memoryLoader = this.memory.loadMemory.bind(this.memory);
+    const memorySaver = this.memory.saveMemory.bind(this.memory);
 
-    this.graph = buildChatGraph(
-      this.memory.loadMemory.bind(this.memory),
-      this.memory.saveMemory.bind(this.memory),
-      tools,
+    // Initialize the single agent graph with tools for all interactions
+    this.agentGraph = buildAgentGraph(
+      memoryLoader,
+      memorySaver,
+      this.dashboardToolService.getTools(),
     );
   }
 
@@ -49,64 +53,28 @@ export class ChatbotService implements OnModuleInit {
       provider: rawConfig?.provider ?? PLATFORM_DEFAULT_PROVIDER,
       model: rawConfig?.model ?? PLATFORM_DEFAULT_MODEL,
       apiKey: rawConfig?.apiKey ?? process.env.DEFAULT_LLM_API_KEY ?? '',
-      baseURL: rawConfig?.baseURL,
-      organization: rawConfig?.organization,
     };
   }
 
-  private async invokeWithFallback(initialState: any) {
+  private async streamWithFallback(graph: any, initialState: any) {
     try {
-      return await this.graph.invoke(initialState);
+      return await graph.stream(initialState, { streamMode: 'updates' });
     } catch (e) {
       const error = e as Error;
       const type = classifyProviderError(error);
 
-      if (type === 'AUTH' || type === 'INVALID_REQUEST') {
-        throw error;
-      }
-
       if (type === 'RATE_LIMIT' || type === 'PROVIDER_DOWN') {
-        const fallbackState = {
-          ...initialState,
-          providerConfig: {
-            provider: PLATFORM_FALLBACK_PROVIDER,
-            model: PLATFORM_FALLBACK_MODEL,
-            apiKey: process.env.DEFAULT_OPENAI_API_KEY ?? '',
+        return graph.stream(
+          {
+            ...initialState,
+            providerConfig: {
+              provider: PLATFORM_FALLBACK_PROVIDER,
+              model: PLATFORM_FALLBACK_MODEL,
+              apiKey: process.env.DEFAULT_OPENAI_API_KEY ?? '',
+            },
           },
-        };
-
-        return this.graph.invoke(fallbackState);
-      }
-
-      throw error;
-    }
-  }
-  private async streamWithFallback(initialState: any) {
-    try {
-      return await this.graph.stream(initialState, {
-        streamMode: 'values',
-      });
-    } catch (e) {
-      const error = e as Error;
-      const type = classifyProviderError(error);
-
-      if (type === 'AUTH' || type === 'INVALID_REQUEST') {
-        throw error;
-      }
-
-      if (type === 'RATE_LIMIT' || type === 'PROVIDER_DOWN') {
-        const fallbackState = {
-          ...initialState,
-          providerConfig: {
-            provider: PLATFORM_FALLBACK_PROVIDER,
-            model: PLATFORM_FALLBACK_MODEL,
-            apiKey: process.env.DEFAULT_OPENAI_API_KEY ?? '',
-          },
-        };
-
-        return this.graph.stream(fallbackState, {
-          streamMode: 'values',
-        });
+          { streamMode: 'updates' },
+        );
       }
 
       throw error;
@@ -119,7 +87,9 @@ export class ChatbotService implements OnModuleInit {
 
   async getHistory(sessionId: string): Promise<ChatMessage[]> {
     const memory = await this.memory.loadMemory(sessionId);
-    return memory?.messages ?? [];
+    return (memory || [])
+      .map(mapBaseMessageToChatMessage)
+      .filter(isChatMessage);
   }
 
   async configureSession(payload: SessionConfigPayload) {
@@ -128,14 +98,14 @@ export class ChatbotService implements OnModuleInit {
 
   handleMessageStream(
     input: z.infer<typeof ChatbotSchema>,
-  ): Observable<StreamData> {
+  ): Observable<StreamEvent> {
     return new Observable((subscriber) => {
       const run = async () => {
-        const rawConfig = this.sessionConfigService.getResolvedConfig(
-          input.sessionId,
-        );
+        const graph = this.agentGraph; // Always use the single agentGraph
 
-        const providerConfig = this.resolveProviderConfig(rawConfig);
+        const providerConfig = this.resolveProviderConfig(
+          this.sessionConfigService.getResolvedConfig(input.sessionId),
+        );
 
         const initialState = {
           sessionId: input.sessionId,
@@ -143,57 +113,67 @@ export class ChatbotService implements OnModuleInit {
           metadataIp: input.metadataIp,
           metadataDevice: input.metadataDevice,
           providerConfig,
-          messages: [
-            {
-              role: 'user',
-              content: input.message,
-              createdAt: new Date().toISOString(),
-            },
-          ],
+          messages: [new HumanMessage(input.message)],
         };
 
-        let lastMessages: ChatMessage[] = [];
-        let lastReply: string | null = null;
-
         try {
-          const stream = await this.streamWithFallback(initialState);
+          const stream = await this.streamWithFallback(graph, initialState);
 
           for await (const chunk of stream) {
-            if (!chunk.messages) continue;
+            const keys = Object.keys(chunk);
+            if (keys.length === 0) continue;
 
-            lastMessages = chunk.messages;
-            const lastMessage = lastMessages[lastMessages.length - 1];
+            const nodeName = keys[0];
+            const nodeValue = chunk[nodeName];
 
-            if (lastMessage?.role === 'assistant') {
-              lastReply = lastMessage.content;
+            if (nodeName === 'llm') {
+              if (!nodeValue) continue;
 
-              subscriber.next({
-                type: 'response.token',
-                sessionId: input.sessionId,
-                token: lastMessage.content,
-              });
+              if (nodeValue instanceof AIMessageChunk) {
+                if (
+                  typeof nodeValue.content === 'string' &&
+                  nodeValue.content.length > 0
+                ) {
+                  subscriber.next({
+                    type: 'token',
+                    content: nodeValue.content,
+                  });
+                }
+                continue;
+              }
+
+              if (typeof nodeValue === 'object' && 'tool_calls' in nodeValue) {
+                const toolCalls = (nodeValue as any).tool_calls;
+
+                if (Array.isArray(toolCalls)) {
+                  for (const call of toolCalls) {
+                    if (call?.name === 'dashboard') {
+                      const { action, ...params } = call.args ?? {};
+                      subscriber.next({
+                        type: 'command',
+                        target: 'dashboard',
+                        action,
+                        params,
+                      });
+                    }
+                  }
+
+                  subscriber.complete();
+                  return;
+                }
+              }
             }
           }
 
-          subscriber.next({
-            type: 'response.completed',
-            sessionId: input.sessionId,
-            reply: lastReply,
-            messages: lastMessages,
-          });
-
+          subscriber.next({ type: 'done' });
           subscriber.complete();
         } catch (e) {
           const error = e as Error;
-          const type = classifyProviderError(error);
-
-          if (type === 'AUTH') {
-            subscriber.error(new UnauthorizedException(error.message));
-          } else if (type === 'INVALID_REQUEST') {
-            subscriber.error(new BadRequestException(error.message));
-          } else {
-            subscriber.error(new InternalServerErrorException(error.message));
-          }
+          subscriber.next({
+            type: 'error',
+            message: error.message,
+          });
+          subscriber.error(new InternalServerErrorException(error.message));
         }
       };
 
@@ -202,52 +182,36 @@ export class ChatbotService implements OnModuleInit {
   }
 
   async handleMessage(input: z.infer<typeof ChatbotSchema>) {
-    const rawConfig = this.sessionConfigService.getResolvedConfig(
-      input.sessionId,
+    const graph = this.agentGraph; // Always use the single agentGraph
+
+    const providerConfig = this.resolveProviderConfig(
+      this.sessionConfigService.getResolvedConfig(input.sessionId),
     );
 
-    const providerConfig = this.resolveProviderConfig(rawConfig);
-
-    const initialState = {
+    const finalState = await graph.invoke({
       sessionId: input.sessionId,
       sessionStartedAt: new Date().toISOString(),
       metadataIp: input.metadataIp,
       metadataDevice: input.metadataDevice,
       providerConfig,
-      messages: [
-        {
-          role: 'user',
-          content: input.message,
-          createdAt: new Date().toISOString(),
-        },
-      ],
-    };
+      messages: [new HumanMessage(input.message)],
+    });
 
-    try {
-      const finalState = await this.invokeWithFallback(initialState);
+    const mappedMessages = (finalState.messages || [])
+      .map(mapBaseMessageToChatMessage)
+      .filter(isChatMessage);
 
-      const messages = finalState.messages;
-      const lastMessage = messages[messages.length - 1];
+    const last = mappedMessages[mappedMessages.length - 1];
 
-      return {
-        sessionId: finalState.sessionId,
-        reply: lastMessage?.role === 'assistant' ? lastMessage.content : null,
-        messages,
-        streamed: false,
-      } as const;
-    } catch (e) {
-      const error = e as Error;
-      const type = classifyProviderError(error);
-
-      if (type === 'AUTH') {
-        throw new UnauthorizedException(error.message);
-      }
-
-      if (type === 'INVALID_REQUEST') {
-        throw new BadRequestException(error.message);
-      }
-
-      throw new InternalServerErrorException(error.message);
-    }
+    return {
+      sessionId: finalState.sessionId,
+      reply: last?.role === 'assistant' ? last.content : null,
+      messages: mappedMessages,
+      streamed: false,
+    } as const;
   }
+}
+
+function isChatMessage(msg: ChatMessage | null): msg is ChatMessage {
+  return msg !== null;
 }

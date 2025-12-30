@@ -14,24 +14,13 @@ export interface ChatMessage {
   createdAt: string;
 }
 
-export interface ChatResponseDto {
-  sessionId: string;
-  reply?: string | null;
-  messages: ChatMessage[];
-  streamed?: boolean;
-}
-
-export type StreamTokenData = {
-  type: 'response.token';
-  sessionId: string;
-  token: string;
-};
-
-export type StreamCompletionData = {
-  type: 'response.completed';
-  sessionId: string;
-  reply: string | null;
-  messages: ChatMessage[];
-};
-
-export type StreamData = StreamTokenData | StreamCompletionData;
+export type StreamEvent =
+  | { type: 'token'; content: string }
+  | {
+      type: 'command';
+      target: 'dashboard';
+      action: 'add_widget' | 'update_widget' | 'delete_widget' | 'list_widgets';
+      params: Record<string, any>;
+    }
+  | { type: 'done' }
+  | { type: 'error'; message: string };
