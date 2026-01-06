@@ -22,7 +22,7 @@ import {
   NewSessionResponseDto,
   StreamMessageDto,
 } from './dto/chatbot.dto';
-import { StreamEvent } from './types'; // Corrected import
+import { StreamEvent } from './types';
 
 @ApiTags('chatbot')
 @Controller('chatbot')
@@ -95,7 +95,6 @@ export class ChatbotController {
 
     const subscription = stream$.subscribe({
       next: (data: StreamEvent) => {
-        // Corrected type
         try {
           res.write(JSON.stringify(data) + '\n');
         } catch (err) {

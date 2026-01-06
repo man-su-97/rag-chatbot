@@ -24,3 +24,18 @@ export type StreamEvent =
     }
   | { type: 'done' }
   | { type: 'error'; message: string };
+
+export interface LangChainMessage {
+  type: string;
+  kwargs: any;
+}
+
+export type SerializedMessage =
+  | {
+      type: 'human' | 'ai' | 'system' | 'tool';
+      kwargs: any;
+    }
+  | {
+      role: 'user' | 'assistant' | 'system';
+      content: string;
+    };

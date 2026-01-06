@@ -3,8 +3,9 @@ import {
   AIMessage,
   HumanMessage,
   SystemMessage,
+  ToolMessage,
 } from '@langchain/core/messages';
-import { ChatMessage } from '../types';
+import { ChatMessage, SerializedMessage } from '../types';
 
 export function mapBaseMessageToChatMessage(msg: unknown): ChatMessage | null {
   if (msg instanceof BaseMessage) {
@@ -47,26 +48,95 @@ export function mapBaseMessageToChatMessage(msg: unknown): ChatMessage | null {
   return null;
 }
 
-/**
- * Hydrates plain message objects from the database into LangChain BaseMessage instances.
- * This is crucial for preventing errors when passing persisted messages back into the graph.
- * @param messages An array of plain objects, typically from a database query.
- * @returns An array of `BaseMessage` instances.
- */
-export function hydrateMessages(
-  messages: { role: string; content: string }[],
-): BaseMessage[] {
-  return messages.map((msg) => {
-    switch (msg.role) {
-      case 'user':
-        return new HumanMessage(msg.content);
-      case 'assistant':
-        return new AIMessage(msg.content);
-      case 'system':
-        return new SystemMessage(msg.content);
-      default:
-        // Fallback for unknown roles, though this should ideally not happen.
-        return new HumanMessage(msg.content);
+export function hydrateMessages(messages: SerializedMessage[]): BaseMessage[] {
+  if (!messages || !Array.isArray(messages)) {
+    return [];
+  }
+
+  const hydrated: BaseMessage[] = [];
+
+  for (const msg of messages) {
+    try {
+      if (!msg || typeof msg !== 'object') {
+        console.warn('Invalid message format:', msg);
+        continue;
+      }
+
+      let baseMessage: BaseMessage | null = null;
+
+      if ('type' in msg) {
+        // Handle LangChain .toJSON() format
+        const type = msg.type;
+        if (typeof type !== 'string') {
+          console.warn('Invalid LangChain message type:', type);
+          continue;
+        }
+        const kwargs = msg.kwargs || {};
+        const content = kwargs.content || '';
+
+        switch (type) {
+          case 'human':
+            baseMessage = new HumanMessage({
+              content,
+            });
+            break;
+
+          case 'ai':
+            baseMessage = new AIMessage({
+              content,
+              additional_kwargs: kwargs.additional_kwargs || {},
+              tool_calls: kwargs.tool_calls || [],
+              response_metadata: kwargs.response_metadata || {},
+            });
+            break;
+
+          case 'system':
+            baseMessage = new SystemMessage({
+              content,
+            });
+            break;
+
+          case 'tool':
+            baseMessage = new ToolMessage({
+              content,
+              tool_call_id: kwargs.tool_call_id || '',
+            });
+            break;
+
+          default:
+            console.warn('Unknown LangChain message type:', type);
+            baseMessage = new HumanMessage(content);
+        }
+      } else if ('role' in msg) {
+        // Handle simple { role, content } format
+        const role = msg.role;
+        const content = msg.content || '';
+
+        switch (role) {
+          case 'user':
+            baseMessage = new HumanMessage(content);
+            break;
+          case 'assistant':
+            baseMessage = new AIMessage(content);
+            break;
+          case 'system':
+            baseMessage = new SystemMessage(content);
+            break;
+          default:
+            console.warn('Unknown simple message role:', role);
+            baseMessage = new HumanMessage(content);
+        }
+      } else {
+        console.warn('Unrecognized message format:', msg);
+      }
+
+      if (baseMessage) {
+        hydrated.push(baseMessage);
+      }
+    } catch (error) {
+      console.error('Error hydrating message:', error, msg);
     }
-  });
+  }
+
+  return hydrated;
 }
