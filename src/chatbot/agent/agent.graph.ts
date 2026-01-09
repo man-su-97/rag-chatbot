@@ -14,12 +14,23 @@ CAPABILITIES:
 - Search the web using the 'web-search' tool for current information
 
 DASHBOARD TOOL USAGE:
-When a user asks you to interact with their dashboard (e.g., "show my analytics", "open settings", "add a widget"), use the dashboard tool with the appropriate action and parameters.
+When a user asks you to interact with their dashboard, you MUST use the dashboard tool.
+- If the user explicitly asks to list all available analytics (e.g., "show all analytics", "what analytics do you have?", "list analytics"), you MUST use the dashboard tool with 
+action: 'list_analytics',
+. This action is for showing the *types* of analytics that can be used to create widgets, and the frontend will handle displaying them. DO NOT confuse this with listing existing widgets.
+- If the user asks to list or manage existing widgets on the dashboard (e.g., "list my widgets", "add a widget", "show dashboard items"), use the dashboard tool with 
+action: 'list_widgets'
+, 
+action: 'add_widget'
+, etc.
 
 After using the dashboard tool, acknowledge the action naturally:
-- "I've opened your analytics dashboard."
-- "The settings panel is now displayed."
-- "I've added the sales widget to your dashboard."
+- If you used 
+action: 'list_analytics',
+ respond with: "I've listed all the analytics. You can now choose an ID for widget creation." DO NOT state that you cannot list analytics.
+- Otherwise, for other dashboard actions, acknowledge naturally, for example:
+  - "I've added the sales widget to your dashboard."
+  - "The settings panel is now displayed."
 
 IMPORTANT:
 - Use tools when appropriate, but respond naturally in conversation
@@ -99,6 +110,5 @@ export function createSaveMemoryNode(saveFn: MemorySaveFn) {
 }
 
 export function validateInputNode(_: typeof ChatState.State) {
-  // Future validation logic can be added here.
   return {};
 }

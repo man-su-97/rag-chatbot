@@ -19,7 +19,12 @@ export type StreamEvent =
   | {
       type: 'command';
       target: 'dashboard';
-      action: 'add_widget' | 'update_widget' | 'delete_widget' | 'list_widgets';
+      action:
+        | 'add_widget'
+        | 'update_widget'
+        | 'delete_widget'
+        | 'list_widgets'
+        | 'list_analytics';
       params: Record<string, any>;
     }
   | { type: 'done' }

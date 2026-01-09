@@ -26,6 +26,26 @@ const PLATFORM_DEFAULT_MODEL = 'gemini-1.5-pro-latest';
 const PLATFORM_FALLBACK_PROVIDER = 'openai' as const;
 const PLATFORM_FALLBACK_MODEL = 'gpt-4o-mini';
 
+function normalizeAIContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') return part;
+        if (part && typeof part === 'object' && 'text' in part) {
+          return String((part as any).text);
+        }
+        return '';
+      })
+      .join('');
+  }
+
+  if (content == null) return '';
+
+  return String(content);
+}
+
 @Injectable()
 export class ChatbotService implements OnModuleInit {
   private agentGraph: any;
@@ -37,12 +57,9 @@ export class ChatbotService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    const memoryLoader = this.memory.loadMemory.bind(this.memory);
-    const memorySaver = this.memory.saveMemory.bind(this.memory);
-
     this.agentGraph = buildAgentGraph(
-      memoryLoader,
-      memorySaver,
+      this.memory.loadMemory.bind(this.memory),
+      this.memory.saveMemory.bind(this.memory),
       this.dashboardToolService.getTools(),
     );
   }
@@ -59,8 +76,7 @@ export class ChatbotService implements OnModuleInit {
     try {
       return await graph.stream(initialState, { streamMode: 'updates' });
     } catch (e) {
-      const error = e as Error;
-      const type = classifyProviderError(error);
+      const type = classifyProviderError(e as Error);
 
       if (type === 'RATE_LIMIT' || type === 'PROVIDER_DOWN') {
         return graph.stream(
@@ -76,7 +92,7 @@ export class ChatbotService implements OnModuleInit {
         );
       }
 
-      throw error;
+      throw e;
     }
   }
 
@@ -100,182 +116,107 @@ export class ChatbotService implements OnModuleInit {
   ): Observable<StreamEvent> {
     return new Observable((subscriber) => {
       const run = async () => {
-        const graph = this.agentGraph;
-
-        const providerConfig = this.resolveProviderConfig(
-          this.sessionConfigService.getResolvedConfig(input.sessionId),
-        );
-
         const initialState = {
           sessionId: input.sessionId,
           sessionStartedAt: new Date().toISOString(),
           metadataIp: input.metadataIp,
           metadataDevice: input.metadataDevice,
-          providerConfig,
+          providerConfig: this.resolveProviderConfig(
+            this.sessionConfigService.getResolvedConfig(input.sessionId),
+          ),
           input: input.message,
         };
 
+        let lastSentContent = '';
+
         try {
-          const stream = await this.streamWithFallback(graph, initialState);
-          let lastSentContent = '';
+          const stream = await this.streamWithFallback(
+            this.agentGraph,
+            initialState,
+          );
 
           for await (const chunk of stream) {
-            const keys = Object.keys(chunk);
-            if (keys.length === 0) continue;
+            const [nodeName] = Object.keys(chunk);
+            if (!nodeName) continue;
 
-            const nodeName = keys[0];
             const nodeValue = chunk[nodeName];
 
-            console.log(`Processing node: ${nodeName}`);
-
             if (nodeName === 'llm' && nodeValue) {
-              console.log('LLM node detected');
-              console.log(
-                '  streamingChunks:',
-                nodeValue.streamingChunks?.length || 0,
-              );
-              console.log('  messages:', nodeValue.messages?.length || 0);
-
-              // ✅ Case 1: Streaming with chunks
               if (
-                nodeValue.streamingChunks &&
                 Array.isArray(nodeValue.streamingChunks) &&
                 nodeValue.streamingChunks.length > 0
               ) {
-                console.log('Using streaming path');
-                const cumulativeContent = nodeValue.streamingChunks
-                  .map((chunk: any) => chunk.content || '')
+                const cumulative = nodeValue.streamingChunks
+                  .map((c: any) => normalizeAIContent(c.content))
                   .join('');
 
-                console.log(
-                  '  Cumulative content length:',
-                  cumulativeContent.length,
-                );
-                console.log('  Last sent length:', lastSentContent.length);
-
-                if (cumulativeContent.length > lastSentContent.length) {
-                  const diff = cumulativeContent.slice(lastSentContent.length);
+                if (cumulative.length > lastSentContent.length) {
+                  const diff = cumulative.slice(lastSentContent.length);
                   if (diff) {
-                    console.log('Emitting diff:', diff.substring(0, 50));
                     subscriber.next({ type: 'token', content: diff });
+                    lastSentContent = cumulative;
                   }
-                  lastSentContent = cumulativeContent;
                 }
-              }
-              // ✅ Case 2: Invoke fallback
-              else if (nodeValue.messages && nodeValue.messages.length > 0) {
-                console.log('✅ Using invoke fallback path');
+              } else if (Array.isArray(nodeValue.messages)) {
                 const lastMessage =
                   nodeValue.messages[nodeValue.messages.length - 1];
 
-                console.log(
-                  '  Last message type:',
-                  lastMessage?.constructor?.name,
-                );
-                console.log(
-                  '  Is AIMessage?',
-                  lastMessage instanceof AIMessage,
-                );
-                console.log('  Content type:', typeof lastMessage?.content);
-                console.log(
-                  '  Content:',
-                  lastMessage?.content?.substring(0, 100),
-                );
+                if (lastMessage instanceof AIMessage) {
+                  const normalized = normalizeAIContent(lastMessage.content);
 
-                const isAIMessage =
-                  lastMessage instanceof AIMessage ||
-                  (lastMessage as any)?._getType?.() === 'ai';
-
-                if (isAIMessage && typeof lastMessage.content === 'string') {
-                  if (
-                    lastMessage.content &&
-                    lastMessage.content !== lastSentContent
-                  ) {
-                    console.log('📤 Emitting invoke content');
+                  if (normalized && normalized !== lastSentContent) {
                     subscriber.next({
                       type: 'token',
-                      content: lastMessage.content,
+                      content: normalized,
                     });
-                    lastSentContent = lastMessage.content;
-                  } else {
-                    console.warn('Content is empty or already sent');
+                    lastSentContent = normalized;
                   }
-                } else {
-                  console.warn(
-                    'Last message is not AIMessage or content is not string',
-                  );
-                }
-              } else {
-                console.warn(
-                  '⚠️ Neither streaming chunks nor messages available!',
-                );
-                console.warn('   nodeValue keys:', Object.keys(nodeValue));
-              }
 
-              if (nodeValue.messages && nodeValue.messages.length > 0) {
-                for (const msg of nodeValue.messages) {
-                  if (msg instanceof AIMessage) {
-                    const toolCalls = msg.tool_calls || [];
-                    for (const call of toolCalls) {
-                      if (call?.name === 'dashboard') {
-                        const { action, ...params } = call.args ?? {};
-                        console.log('🔧 Emitting command:', action);
-                        subscriber.next({
-                          type: 'command',
-                          target: 'dashboard',
-                          action,
-                          params,
-                        });
-                      }
+                  for (const call of lastMessage.tool_calls ?? []) {
+                    if (call?.name === 'dashboard') {
+                      const { action, ...params } = call.args ?? {};
+                      subscriber.next({
+                        type: 'command',
+                        target: 'dashboard',
+                        action,
+                        params,
+                      });
                     }
                   }
                 }
               }
             }
 
-            if (nodeName === 'tools') {
-              console.log('🔧 Tools node executed');
-              continue;
-            }
-
             if (nodeName === 'saveMemory') {
-              console.log('💾 Memory saved, completing stream');
               subscriber.next({ type: 'done' });
               subscriber.complete();
               return;
             }
           }
-
-          console.log('⚠️ Stream ended without saveMemory node');
-          subscriber.next({ type: 'done' });
-          subscriber.complete();
         } catch (e) {
-          const error = e as Error;
-          console.error('❌ Stream error:', error);
           subscriber.next({
             type: 'error',
-            message: error.message,
+            message: (e as Error).message,
           });
-          subscriber.error(new InternalServerErrorException(error.message));
+          subscriber.error(
+            new InternalServerErrorException((e as Error).message),
+          );
         }
       };
 
       void run();
     });
   }
+
   async handleMessage(input: z.infer<typeof ChatbotSchema>) {
-    const graph = this.agentGraph;
-
-    const providerConfig = this.resolveProviderConfig(
-      this.sessionConfigService.getResolvedConfig(input.sessionId),
-    );
-
-    const finalState = await graph.invoke({
+    const finalState = await this.agentGraph.invoke({
       sessionId: input.sessionId,
       sessionStartedAt: new Date().toISOString(),
       metadataIp: input.metadataIp,
       metadataDevice: input.metadataDevice,
-      providerConfig,
+      providerConfig: this.resolveProviderConfig(
+        this.sessionConfigService.getResolvedConfig(input.sessionId),
+      ),
       input: input.message,
     });
 

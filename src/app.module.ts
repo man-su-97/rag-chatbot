@@ -5,11 +5,13 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ChatbotModule } from './chatbot/chatbot.module';
+import { CommandModule } from './command/command.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ChatbotModule,
+    CommandModule,
 
     ThrottlerModule.forRootAsync({
       inject: [ConfigService],

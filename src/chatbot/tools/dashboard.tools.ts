@@ -1,21 +1,16 @@
 import { z } from 'zod';
 
-/**
- * This is the new, flat, Gemini-compatible schema for the dashboard tool.
- * It replaces the complex nested structure with a single object where all
- * possible parameters for all actions are optional at the top level.
- *
- * This simpler structure is fully supported by Google's Generative AI
- * function calling and relies on the new detailed system prompt to guide the
- * LLM in selecting the correct parameters for a given `action`.
- */
 export const dashboardToolSchema = z.object({
   action: z
-    .enum(['add_widget', 'update_widget', 'delete_widget', 'list_widgets'])
+    .enum([
+      'add_widget',
+      'update_widget',
+      'delete_widget',
+      'list_widgets',
+      'list_analytics',
+    ])
     .describe('The specific dashboard action to perform.'),
 
-  // A flattened union of all possible fields from all actions, all optional.
-  // The system prompt is now responsible for telling the LLM which are required for each action.
   id: z
     .string()
     .optional()

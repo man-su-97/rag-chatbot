@@ -65,7 +65,6 @@ export function hydrateMessages(messages: SerializedMessage[]): BaseMessage[] {
       let baseMessage: BaseMessage | null = null;
 
       if ('type' in msg) {
-        // Handle LangChain .toJSON() format
         const type = msg.type;
         if (typeof type !== 'string') {
           console.warn('Invalid LangChain message type:', type);
@@ -108,7 +107,6 @@ export function hydrateMessages(messages: SerializedMessage[]): BaseMessage[] {
             baseMessage = new HumanMessage(content);
         }
       } else if ('role' in msg) {
-        // Handle simple { role, content } format
         const role = msg.role;
         const content = msg.content || '';
 

@@ -9,9 +9,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.enableCors({
-    origin: ['http://localhost:3005'],
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true,
   });
 
   const config = new DocumentBuilder()
@@ -31,6 +32,7 @@ Multimodel AI Chatbot Backend (LangGraph powered)
     )
     .setVersion('1.0.0')
     .addTag('chatbot', 'Chat, streaming & session APIs')
+    .addTag('command', 'Direct command interpretation APIs')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);
@@ -47,4 +49,7 @@ Multimodel AI Chatbot Backend (LangGraph powered)
   console.log('Swagger UI available at http://localhost:3005/api');
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
